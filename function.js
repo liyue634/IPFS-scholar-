@@ -1,5 +1,5 @@
 const { createPow } = require('@textile/powergate-client')
-const host = "http://45.32.19.182:6002"
+const host = "http://58.144.221.21:6002"
 const pow = createPow({ host })
 
 var mysql = require('mysql');
@@ -46,6 +46,11 @@ module.exports = {
   closeDb:function(){
     connection.end();
     console.log("close db success!")
+  },
+
+
+  getFileType:function(fileName){
+    return fileName.substr(fileName.length-3,3);
   },
   
 };

@@ -6,16 +6,16 @@ const jwt = require('jsonwebtoken');
 const app = express();
 const path = require('path');
 const { createPow } = require('@textile/powergate-client')
-const host = "http://45.32.19.182:6002"
+const host = "http://58.144.221.21:6002"
+//const host = "http://209.250.244.189:6002"
 const pow = createPow({ host })
-const { ffsTypes } = require('@textile/powergate-client')
 const func = require('./function.js')
 const fs = require('fs');
 const formidable = require('formidable');
 const User = require('./core/user');
 const File = require('./core/file');
-//global.currentuser = new User();
 const exec = func.connectDb();
+const JobStatus = require("@textile/grpc-powergate-client/dist/ffs/rpc/rpc_pb");
 
 app.use(bodyParser.json({ limit: "1mb" }));
 app.use(
@@ -29,14 +29,13 @@ app.listen(3000, () => {
 });
 
 
-
 app.post('/register', (req, res, next) => {
     const username = req.body.username;
     const password = bcrypt.hashSync(req.body.password);
     const email = req.body.email;
     console.log("-------------------------register-----------------------------")
     console.log("(register)username:" + username + ",password:" + password + ",email:" + email);
-    // var exec = func.connectDb();
+    var exec = func.connectDb();
 
     try {
         let sql = `select * from user_logininfo where username='${username}'`;
@@ -90,8 +89,7 @@ app.post('/login', async (req, res) => {
     console.log("-------------------------login-----------------------------")
 
     const { username, password } = req.body;
-    // console.log("username:" + username + ",password:" + password);
-    //  var exec = func.connectDb();
+    
     const sql = `select *from user_logininfo where username='${username}'`;
     exec(sql).then(async (result) => {
         if (result && result.length != 0) {
@@ -158,7 +156,7 @@ const auth = async (req, res, next) => {
         })
     }
     const AuthToken = req.headers.authorization.split(" ").pop();
-    // console.log(AuthToken)
+    
 
     try {
         const { username } = jwt.verify(AuthToken, SECRET)
@@ -214,16 +212,15 @@ app.post('/upload', auth, async (req, res, next) => {
         pow.setToken(token);
 
         const buffer = fs.readFileSync(path)
-        // console.log("buffer:" + buffer);
         try {
             const { cid } = await pow.ffs.stage(buffer)
             if (cid != undefined) {
+                console.log("cid: "+cid)
                 var sql = `INSERT INTO fileinfo VALUES('${description}','${cid}','${filename}','${abstract}','${walletAddr}',0)`
                 exec(sql).then(async (result) => {
                     console.log(result);
                     if (result != undefined && result.length != 0) {
                         //提交订单申请上传到filecoin
-                        //const jobId = "02bc66e4-8750-4b48-a478-df31e82be981";
                         try{
                             const { jobId } = await pow.ffs.pushStorageConfig(cid)
                             console.log("jobId:" + jobId)
@@ -235,8 +232,23 @@ app.post('/upload', auth, async (req, res, next) => {
                                 })
                                 return;
                             }
-                            res.json({ "code": 200, "msg": "upload success!" });
-                            return;
+                            
+                            // const {config} = await pow.ffs.getStorageConfig(cid);
+                            //      console.dir(config);
+                            const type=func.getFileType(filename);
+                            sql=`INSERT into uploadrecords VALUES('${token}','${filename}',unix_timestamp(now()),'${type}'); `;
+                            exec(sql).then( (result2) =>{
+                                if(result2==undefined||result2.length==0){
+                                    res.json({
+                                        "code":500,
+                                        "msg":"server error!"
+                                    })
+                                    return;
+                                }
+                                res.json({ "code": 200, "msg": "upload success!" });
+                                return;
+                            })
+                            
                         }catch(e){
                             console.log(e)
                             res.json({
@@ -274,23 +286,6 @@ app.post('/upload', auth, async (req, res, next) => {
 
     });
 });
-
-app.post('/',async (req,res)=>{
-    // console.log("-------------------------------test------------------------------------")
-    // const token='615e6738-16ce-4e3e-a181-a289fb955f32';
-    // pow.setToken(token);
-    // const { jobId } = await pow.ffs.pushStorageConfig('QmYQwQTd6RY1KtuBguHADYroUDgcuCTQmgdLJmQK9y5PbY')
-    //                         console.log("jobId:" + jobId)
-
-    // const filename='aaa.pdf'
-    // res.download(filename,(err)=>{
-    //     console.log(err);
-    // })
-    // console.log('Your file has been downloaded!')
-
-    const { token } = await pow.ffs.create()
-                    console.log("token: " + token)
-})
 
 app.post('/retrieve', (req, res) => {
     console.log("-------------------------retrieve-----------------------------")
@@ -360,12 +355,22 @@ app.post('/retrieve/download', auth, async (req, res) => {
                     "msg": "error!"
                 })
             } else {
-                // res.download(path.join(__dirname,'/')+filename,(err)=>{
-                //     if()
-                //     console.log(err);
-                // })
-                // console.log('Your file has been downloaded!')
-                res.sendFile(path.join(__dirname, '/') + filename)
+                
+                const type=func.getFileType(filename);
+                console.log(type);
+                const sql=`INSERT into downloadrecords VALUES('${token}','${filename}',unix_timestamp(now()),'${type}');`
+                exec(sql).then(async (result) =>{
+                    console.log(result)
+                    if(result==undefined||result.length==0){
+                        res.json({
+                            "code":500,
+                            "msg":"server error!"
+                        })
+                        return;
+                    }else{
+                        res.sendFile(path.join(__dirname, '/') + filename)
+                    }
+                })
             }
         });
 
@@ -393,10 +398,7 @@ app.post('/retrieve/download', auth, async (req, res) => {
                                 "msg": "writeFile error!"+err
                             })
                         } else {
-                            // res.download(filename,(err)=>{
-                            //     console.log(err);
-                            // })
-                            // console.log('Your file has been downloaded!')
+                            
                             res.sendFile(path.join(__dirname, '/') + filename)
                         }
                     });
@@ -422,15 +424,16 @@ app.post('/retrieve/download', auth, async (req, res) => {
 app.post('/retrieve/download/payment', auth, async (req, res) => {
     console.log("-------------------------payment-----------------------------")
 
-    var from = req.body.from;
-    var to = req.body.to;
-    var amnt = req.body.amnt;
-    var cid = req.body.cid;
-    var token = req.body.token;
+    const from = req.body.from;
+    const to = req.body.to;
+    const amnt = req.body.amnt;
+    const cid = req.body.cid;
+    const token = req.body.token;
 
     
     try {
         pow.setToken(token);
+        if(amnt>0)
         await pow.ffs.sendFil(from, to, amnt);
         const sql = `UPDATE fileinfo set downloads=downloads+1 where cid='${cid}';`
         exec(sql).then((result) => {
@@ -483,6 +486,82 @@ app.post('/createWallet', auth, async (req, res) => {
 
 })
 
+
+//record=1:downloadrecord,record=2:uploadrecord
+app.post('/Record',auth,(req,res,_)=>{
+    const token=req.body.token;
+    const record=req.body.record;
+    if(record==1)
+    var sql=`SELECT filename,time,type from downloadrecords where token='${token}';`;
+    if(record==2)
+    var sql=`SELECT filename,time,type from uploadrecords where token='${token}';`;
+    exec(sql).then((result) =>{
+        if(result==undefined){
+            res.json({
+                "code":422,
+                "msg":"The token you provided may be wrong"
+            })
+            return;
+        }
+        if(result.length==0){
+
+            res.json({
+                "code":200,
+                "msg":record==1?"You haven't downloaded any files yet. Go to find the files you are interested in!":"You haven't uploaded any files yet.See if there are any files that need to be stored on the filecoin network!"
+            })
+            return;
+        }
+        console.log(result);
+        res.json({
+            "code":200,
+            "data":result
+        })
+    })
+
+})
+
+app.post('/changePassword',auth,(req,res,_)=>{
+    const username=req.body.username;
+    const oldPassword=req.body.oldPassword;
+    const newPassword = bcrypt.hashSync(req.body.newPassword);
+    
+    const rsql=`SELECT * FROM user_logininfo where username='${username}'`;
+    exec(rsql).then(async (result) => {
+        if (result && result.length != 0) {
+            const user = result[0];
+            const isPasswordValid = bcrypt.compareSync(oldPassword, user.password);
+            if (!isPasswordValid) {
+                res.json({
+                    "code": 422,
+                    "msg": "The original password entered is incorrect!"
+                });
+                return;
+            }else{
+                const sql=`UPDATE user_logininfo set password='${newPassword}' where username='${username}';`;
+            exec(sql).then((result1)=>{
+                if(result1==undefined||result1.length==0){
+                    res.json({
+                        "code":500,
+                        "msg":"Ooops!Server error, password change failed!"
+                    })
+                    return;
+                }else{
+                    res.json({
+                        "code":200,
+                        "msg":"The password has been changed successfully. Now you need to log in again"
+                    })
+                }
+            })
+            }
+        }else{
+            res.json({
+                "code":500,
+                "msg":"Modification failed. Please try again later!"
+            })
+        }
+    })
+
+})
 app.post('/addWallet', auth, (req, res, _) => {
 
 })
